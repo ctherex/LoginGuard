@@ -1,0 +1,89 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+    <title>LoginGuard - Login</title>
+    <style>
+        body {
+            background: #101827;
+            color: #f1f5f9;
+            font-family: Arial, sans-serif;
+            display: grid;
+            place-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+
+        .login-box {
+            background: #1e293b;
+            border: 1px solid #334155;
+            padding: 32px;
+            border-radius: 12px;
+            width: min(360px, 85vw);
+        }
+
+        h1 {
+            margin-top: 0;
+        }
+
+        input {
+            display: block;
+            box-sizing: border-box;
+            width: 100%;
+            padding: 12px;
+            margin: 12px 0;
+            background: #0f172a;
+            color: white;
+            border: 1px solid #475569;
+            border-radius: 6px;
+        }
+
+        button {
+            width: 100%;
+            padding: 12px;
+            margin-top: 10px;
+            background: #2563eb;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+        }
+
+        .error {
+            color: #f87171;
+        }
+
+        a {
+            color: #93c5fd;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <h1>LoginGuard</h1>
+        <p>Security Lab Authentication</p>
+
+        <form method="POST" action="/authenticate">
+            <label for="username">Username</label>
+            <input id="username" name="username"
+                   autocomplete="username" required>
+
+            <label for="password">Password</label>
+            <input id="password" name="password"
+                   type="password"
+                   autocomplete="current-password"
+                   required>
+
+            <button type="submit">Sign In</button>
+        </form>
+
+        {% if error %}
+        <p class="error">{{ error }}</p>
+        {% endif %}
+
+    </div>
+</body>
+</html>
