@@ -3,13 +3,24 @@ from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
+from dotenv import load_dotenv
 import os
 import time
 
+load_dotenv()
+
 app = Flask(__name__)
 
+secret_key = os.getenv("FLASK_SECRET_KEY")
+
+if not secret_key:
+    raise RuntimeError(
+        "FLASK_SECRET_KEY is missing. "
+        "Please configure it in your .env file."
+    )
+
 app.config.update(
-    SECRET_KEY=os.environ["FLASK_SECRET_KEY"],
+    SECRET_KEY=secret_key,
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=False,  # Local HTTP development only
