@@ -6,6 +6,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 import os
 import time
+import redis
+import storage
 
 load_dotenv()
 
@@ -27,18 +29,10 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(minutes=30)
 )
 
-# Store failed login timestamps for each source IP
-failed_attempts = defaultdict(list)
-
-# Store recent security events
-security_events = []
-
-# Detection settings
-MAX_FAILURES = 5
-TIME_WINDOW = 60
-
-DEMO_USERNAME = "student"
-DEMO_PASSWORD_HASH = generate_password_hash("Presentation!")
+USERS = {
+    "student": generate_password_hash("Presentation!"),
+    "admin": generate_password_hash("admin")
+}
 
 def login_required(function):
     @wraps(function)
@@ -121,12 +115,37 @@ def logout():
 @app.route("/events")
 @login_required
 def events():
-    return jsonify(security_events)
+    try:
+        return jsonify(storage.get_events())
+    except redis.RedisError:
+        return jsonify({
+            "error": "Security events unavailable"
+        }), 503
 
 
 @app.route("/health")
 def health():
-    return jsonify({"status": "healthy"})
+    return jsonify({
+        "status": "healthy",
+        "application": "LoginGuard"
+    })
+
+@app.route("/ready")
+def ready():
+    try:
+        if storage.redis_healthy():
+            return jsonify({
+                "status": "ready",
+                "redis": "connected"
+            })
+
+    except redis.RedisError:
+        pass
+
+    return jsonify({
+        "status": "not ready",
+        "redis": "unavailable"
+    }), 503
 
 @app.route("/info")
 @login_required
@@ -143,51 +162,109 @@ def login_page():
 
     return render_template("login.html")
 
+
 @app.route("/authenticate", methods=["POST"])
 def authenticate():
-    username = request.form.get("username", "")
+    username = request.form.get("username", "").strip()
     password = request.form.get("password", "")
+    client_ip = request.remote_addr or "unknown"
 
-    # IP of the direct network peer
-    client_ip = request.remote_addr
+    # Use the existing demo accounts from USERS.
+    # Do not record submitted passwords.
 
-    success = (
-        username == DEMO_USERNAME
-        and check_password_hash(
-            DEMO_PASSWORD_HASH, password
+    try:
+        # Check lockout before validating the password.
+        remaining = (
+            storage.get_lockout_remaining(username)
+            if username in USERS else 0
         )
-    )
 
-    now = time.time()
+        if remaining > 0:
+            event = {
+                "timestamp": datetime.now(
+                    timezone.utc
+                ).isoformat(),
+                "ip": client_ip,
+                "username": username,
+                "success": False,
+                "failed_attempts": 0,
+                "alert": True,
+                "event_type": "ACCOUNT_LOCKED"
+            }
 
-    failed_attempts[client_ip] = [
-        timestamp
-        for timestamp in failed_attempts[client_ip]
-        if now - timestamp < TIME_WINDOW
-    ]
+            storage.save_event(event)
 
-    if not success:
-        failed_attempts[client_ip].append(now)
+            return render_template(
+                "login.html",
+                error=(
+                    "Account temporarily locked. "
+                    f"Try again in {remaining} seconds."
+                )
+            ), 429
 
-    count = len(failed_attempts[client_ip])
+        # Verify credentials.
+        success = (
+            username in USERS
+            and check_password_hash(
+                USERS[username], password
+            )
+        )
 
-    alert = not success and count >= MAX_FAILURES
+        account_locked = False
+        account_failure_count = 0
 
-    event = {
-        "timestamp": datetime.now(
-            timezone.utc
-        ).isoformat(),
-        "ip": client_ip,
-        "username": username,
-        "success": success,
-        "failed_attempts": count,
-        "alert": alert
-    }
+        if success:
+            storage.reset_account_failures(username)
+            ip_count = storage.get_ip_failure_count(client_ip)
 
-    security_events.append(event)
+        else:
+            ip_count = storage.record_ip_failure(client_ip)
 
-    if len(security_events) > 100:
-        security_events.pop(0)
+            if username in USERS:
+                result = storage.record_account_failure(
+                    username
+                )
+
+                account_failure_count = result["count"]
+                account_locked = result["locked"]
+
+        alert = (
+            not success
+            and (
+                ip_count >= storage.MAX_FAILURES
+                or account_locked
+            )
+        )
+
+        event_type = (
+            "LOGIN_SUCCESS" if success
+            else "ACCOUNT_LOCKOUT" if account_locked
+            else "LOGIN_FAILURE"
+        )
+
+        event = {
+            "timestamp": datetime.now(
+                timezone.utc
+            ).isoformat(),
+            "ip": client_ip,
+            "username": username,
+            "success": success,
+            "failed_attempts": ip_count,
+            "account_failures": account_failure_count,
+            "account_locked": account_locked,
+            "alert": alert,
+            "event_type": event_type
+        }
+
+        storage.save_event(event)
+
+    except redis.RedisError:
+        app.logger.exception("Redis unavailable")
+
+        return render_template(
+            "login.html",
+            error="Authentication temporarily unavailable."
+        ), 503
 
     if success:
         session.clear()
@@ -197,11 +274,35 @@ def authenticate():
 
         return redirect(url_for("home"))
 
+    if account_locked:
+        return render_template(
+            "login.html",
+            error=(
+                "Too many failed attempts. "
+                "Account locked for 60 seconds."
+            )
+        ), 429
+
     return render_template(
         "login.html",
         error="Invalid username or password"
     ), 401
 
+@app.route("/locked-accounts")
+@login_required
+def get_locked_accounts():
+    try:
+        accounts = storage.get_locked_accounts(USERS.keys())
+
+        return jsonify({
+            "count": len(accounts),
+            "accounts": accounts
+        })
+
+    except redis.RedisError:
+        return jsonify({
+            "error": "Lockout information unavailable"
+        }), 503
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000)

@@ -48,9 +48,21 @@
 
         .stats {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 20px;
             margin-bottom: 25px;
+        }
+
+        @media (max-width: 850px) {
+            .stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 500px) {
+            .stats {
+                grid-template-columns: 1fr;
+            }
         }
 
         .card, .panel {
@@ -73,6 +85,26 @@
 
         .panel {
             margin-bottom: 25px;
+        }
+
+        .locked-account {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            margin-bottom: 10px;
+            background: #0f172a;
+            border: 1px solid #475569;
+            border-radius: 6px;
+        }
+
+        .lockout-timer {
+            color: #fbbf24;
+            font-weight: bold;
+        }
+
+        #locked-count {
+            color: #fbbf24;
         }
 
         input {
@@ -218,36 +250,19 @@
             <h3>Security Alerts</h3>
             <div class="number" id="alerts">0</div>
         </div>
+
+        <div class="card">
+            <h3>Locked Accounts</h3>
+            <div class="number" id="locked-count">0</div>
+        </div>
     </section>
 
-    <!-- Login simulation -->
     <section class="panel">
-        <h2>Simulate Login Activity</h2>
+        <h2>Currently Locked Accounts</h2>
 
-        <label for="ip">Simulated Source IP</label>
-
-        <input
-            type="text"
-            id="ip"
-            value="192.168.1.50"
-            placeholder="192.168.1.50"
-        >
-
-        <button class="success"
-                onclick="sendLogin(true)">
-            Successful Login
-        </button>
-
-        <button onclick="sendLogin(false)">
-            Failed Login
-        </button>
-
-        <button class="danger"
-                onclick="simulateAttack()">
-            Simulate Brute-Force Attack
-        </button>
-
-        <p id="message" aria-live="polite"></p>
+        <div id="locked-accounts-list">
+            <p class="subtitle">Loading account status...</p>
+        </div>
     </section>
 
     <!-- Events -->
@@ -261,6 +276,7 @@
                         <th>Timestamp</th>
                         <th>Source IP</th>
                         <th>Username</th>
+                        <th>Event Type</th>
                         <th>Result</th>
                         <th>Failed Count</th>
                         <th>Alert</th>
@@ -360,6 +376,7 @@
                     new Date(event.timestamp).toLocaleString(),
                     event.ip,
                     event.username || "Simulation",
+                    event.event_type || "LOGIN_ATTEMPT",
                     event.success ? "Success" : "Failed",
                     event.failed_attempts,
                     event.alert ? "ALERT" : "-"
@@ -369,7 +386,7 @@
                     const cell = document.createElement("td");
                     cell.textContent = value;
 
-                    if (index === 5 && event.alert) {
+                    if (index === 6 && event.alert) {
                         cell.className = "alert";
                     }
 
@@ -411,11 +428,63 @@
         }
     }
 
+    async function loadLockedAccounts() {
+    try {
+        const response = await fetch("/locked-accounts");
+
+        if (!response.ok) {
+            throw new Error("Unable to retrieve lockouts");
+        }
+
+        const data = await response.json();
+
+        // Update the statistics card
+        document.getElementById("locked-count").textContent =
+            data.count;
+
+        const container = document.getElementById(
+            "locked-accounts-list"
+        );
+
+        container.replaceChildren();
+
+        if (data.accounts.length === 0) {
+            const message = document.createElement("p");
+            message.className = "subtitle";
+            message.textContent = "No accounts currently locked.";
+            container.appendChild(message);
+            return;
+        }
+
+        data.accounts.forEach(account => {
+            const row = document.createElement("div");
+            row.className = "locked-account";
+
+            const username = document.createElement("strong");
+            username.textContent = account.username;
+
+            const remaining = document.createElement("span");
+            remaining.className = "lockout-timer";
+            remaining.textContent =
+                `${account.remaining_seconds}s remaining`;
+
+            row.appendChild(username);
+            row.appendChild(remaining);
+            container.appendChild(row);
+        });
+
+    } catch (error) {
+        console.error("Lockout status error:", error);
+        }
+    }
+
     loadEvents();
+    loadLockedAccounts();
     checkHealth();
 
-    // Refresh the dashboard every 3 seconds.
+    // Refresh every 3 seconds
     setInterval(loadEvents, 3000);
+    setInterval(loadLockedAccounts, 3000);
     setInterval(checkHealth, 3000);
 </script>
 
